@@ -154,38 +154,45 @@ class IndiClient(PyIndi.BaseClient):
 
     def capture(self, exposure=1, n_frames=10):
         ii = 0
-        while ii < n_frames:
-            ii += 1
-            print(f"Capturing frame {ii} of {n_frames}")
+        gains = np.linspace(600, 6000, n_frames)
+        average_pixel_values = []
 
-            # Trigger image acquisition
+        while ii < n_frames:
+            print(f"Capturing frame {ii + 1} of {n_frames}")
+
+            # Set gain and exposure
+            self.set_gain(gains[ii])
             self.set_exposure(exposure)
 
-            # Get fits from blob and extract image
+            # Get FITS image
             blob = self.ccd_ccd1[0]
             fits_data = blob.getblobdata()
             hdul = fits.open(io.BytesIO(fits_data))
             image_data = hdul[0].data
 
-            # Define color limits (you can set them manually or based on the image statistics)
-            vmin = np.percentile(image_data, 5)  # 5th percentile
-            vmax = np.percentile(image_data, 95)  # 95th percentile
-
-            # Display the image
+            # Compute average pixel value
             if image_data is not None:
-                plt.figure(figsize=(8, 8))
-                plt.imshow(image_data, cmap='gray', origin='lower', vmin=vmin, vmax=vmax)
-                plt.title("Picture")
-                plt.colorbar(label="Pixel value")
-                plt.show()
+                mean_value = np.mean(image_data)
+                average_pixel_values.append(mean_value)
             else:
                 print("No image data found in FITS file.")
+                average_pixel_values.append(np.nan)
+
             hdul.close()
-            print(f"Frame {ii} of {n_frames} captured!")
+            print(f"Frame {ii + 1} of {n_frames} captured!")
+            ii += 1
+
+        # Plot average pixel value vs gain
+        plt.figure(figsize=(8, 5))
+        plt.plot(gains, average_pixel_values, marker='o')
+        plt.xlabel("Gain")
+        plt.ylabel("Average Pixel Value")
+        plt.title("Average Pixel Value vs. Gain")
+        plt.grid(True)
+        plt.show()
 
 
 if __name__ == "__main__":
     client = IndiClient()
-    client.set_gain(400)
-    client.capture(exposure=1, n_frames=2)
+    client.capture(exposure=0.4, n_frames=10)
     print("Ready!")
