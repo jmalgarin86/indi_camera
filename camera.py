@@ -15,6 +15,8 @@ class IndiClient(PyIndi.BaseClient):
         self.port = port
         self.device_ccd = None
         self.generic_properties = []
+        self.blob_event = threading.Event()
+        self.last_blob = None
 
         # Shows the indi version used in the code
         x = PyIndi.INDI_VERSION_MAJOR
@@ -41,6 +43,24 @@ class IndiClient(PyIndi.BaseClient):
         device_list = self.getDevices()
         for device in device_list:
             print(f"   > {device.getDeviceName()}")
+
+    def get_device(self):
+        self.device_ccd = self.getDevice(self.device)
+        while not self.device_ccd:
+            time.sleep(0.5)
+            self.device_ccd = self.getDevice(self.device)
+        print(f"   > {self.device_ccd.getDeviceName()}")
+
+    def connect_device(self):
+        ccd_connect = self.device_ccd.getSwitch("CONNECTION")
+        while not ccd_connect:
+            time.sleep(0.5)
+            ccd_connect = self.device_ccd.getSwitch("CONNECTION")
+        if not (self.device_ccd.isConnected()):
+            ccd_connect.reset()
+            ccd_connect[0].setState(PyIndi.ISS_ON)  # the "CONNECT" switch
+            self.sendNewSwitch(ccd_connect)
+        print("Device connected")
 
     def get_properties(self):
         generic_properties = self.device_ccd.getProperties()
@@ -69,23 +89,6 @@ class IndiClient(PyIndi.BaseClient):
 
         return 0
 
-    def get_device(self):
-        self.device_ccd = self.getDevice(self.device)
-        while not self.device_ccd:
-            time.sleep(0.5)
-            self.device_ccd = self.getDevice(self.device)
-        print(f"   > {self.device_ccd.getDeviceName()}")
-
-    def connect_device(self):
-        ccd_connect = self.device_ccd.getSwitch("CONNECTION")
-        while not ccd_connect:
-            time.sleep(0.5)
-            ccd_connect = self.device_ccd.getSwitch("CONNECTION")
-        if not (self.device_ccd.isConnected()):
-            ccd_connect.reset()
-            ccd_connect[0].setState(PyIndi.ISS_ON)  # the "CONNECT" switch
-            self.sendNewSwitch(ccd_connect)
-
     def set_exposure(self, exposure):
         ccd_exposure = self.device_ccd.getNumber("CCD_EXPOSURE")
         while not ccd_exposure:
@@ -94,12 +97,36 @@ class IndiClient(PyIndi.BaseClient):
         ccd_exposure[0].setValue(exposure)
         self.sendNewNumber(ccd_exposure)
 
+    def set_ccd_capture_format(self, capture_format="INDI_RGB(RGB)"):
+        # Capture format
+        ccd_capture_format = self.device_ccd.getSwitch("CCD_CAPTURE_FORMAT")
+        while not ccd_capture_format:
+            time.sleep(0.5)
+            ccd_capture_format = self.device_ccd.getSwitch("CCD_CAPTURE_FORMAT")
+
+        # Transfer format
+        ccd_transfer_format = self.device_ccd.getSwitch("CCD_TRANSFER_FORMAT")
+        while not ccd_transfer_format:
+            time.sleep(0.5)
+            ccd_transfer_format = self.device_ccd.getSwitch("CCD_TRANSFER_FORMAT")
+
+        if capture_format == "INDI_RGB(RGB)":
+            ccd_capture_format[0].setState(PyIndi.ISS_ON)
+            ccd_transfer_format[0].setState(PyIndi.ISS_OFF)
+            ccd_capture_format[1].setState(PyIndi.ISS_OFF)
+            ccd_transfer_format[1].setState(PyIndi.ISS_ON)
+        elif capture_format == "INDI_RAW(RAW 16)":
+            ccd_capture_format[0].setState(PyIndi.ISS_OFF)
+            ccd_transfer_format[0].setState(PyIndi.ISS_ON)
+            ccd_capture_format[1].setState(PyIndi.ISS_ON)
+            ccd_transfer_format[1].setState(PyIndi.ISS_OFF)
 
 if __name__ == "__main__":
     client = IndiClient()
     client.connect_server()
     client.get_device()
     client.connect_device()
-    client.set_exposure(0.5)
+    client.set_exposure(0.1)
+    client.set_ccd_capture_format("INDI_RGB(RGB)")
     client.get_properties()
     print("Ready!")
