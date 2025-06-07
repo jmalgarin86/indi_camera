@@ -17,12 +17,34 @@ class IndiClient(PyIndi.BaseClient):
         self.generic_properties = []
         self.blob_event = threading.Event()
         self.last_blob = None
+        self.blob_event.clear()
 
-        # Shows the indi version used in the code
-        x = PyIndi.INDI_VERSION_MAJOR
-        y = PyIndi.INDI_VERSION_MINOR
-        z = PyIndi.INDI_VERSION_RELEASE
-        print(f"PyIndi version: {x}.{y}.{z}")
+        # Connect to the server
+        self.connect_server()
+
+        # Get device
+        self.get_device()
+
+        # Connect to the device
+        self.connect_device()
+
+        # Fix frame bug
+        self.set_ccd_capture_format("INDI_RAW(RAW 16)")
+
+        # Get exposure and controls properties
+        self.ccd_exposure = self.device_ccd.getNumber("CCD_EXPOSURE")
+        while not self.ccd_exposure:
+            time.sleep(0.5)
+            self.ccd_exposure = self.device_ccd.getNumber("CCD_EXPOSURE")
+        self.ccd_gain = self.device_ccd.getNumber("CCD_CONTROLS")
+        while not self.ccd_gain:
+            time.sleep(0.5)
+            self.ccd_gain = self.device_ccd.getNumber("CCD_CONTROLS")
+
+    def updateProperty(self, prop):
+        if prop.getType() == PyIndi.INDI_BLOB:
+            print("new BLOB ", prop.getName())
+            self.blob_event.set()
 
     def connect_server(self):
         self.setServer(hostname=self.host, port=self.port)
@@ -90,12 +112,14 @@ class IndiClient(PyIndi.BaseClient):
         return 0
 
     def set_exposure(self, exposure):
-        ccd_exposure = self.device_ccd.getNumber("CCD_EXPOSURE")
-        while not ccd_exposure:
-            time.sleep(0.5)
-            ccd_exposure = self.device_ccd.getNumber("CCD_EXPOSURE")
-        ccd_exposure[0].setValue(exposure)
-        self.sendNewNumber(ccd_exposure)
+        self.ccd_exposure[0].setValue(exposure)
+        self.sendNewNumber(self.ccd_exposure)
+        print(f"Exposure set to {exposure}")
+
+    def set_gain(self, gain):
+        self.ccd_gain[0].setValue(gain)
+        self.sendNewNumber(self.ccd_gain)
+        print(f"Gain set to {gain}")
 
     def set_ccd_capture_format(self, capture_format="INDI_RGB(RGB)"):
         # Capture format
@@ -110,6 +134,7 @@ class IndiClient(PyIndi.BaseClient):
             time.sleep(0.5)
             ccd_transfer_format = self.device_ccd.getSwitch("CCD_TRANSFER_FORMAT")
 
+        # Set the format
         if capture_format == "INDI_RGB(RGB)":
             ccd_capture_format[0].setState(PyIndi.ISS_ON)
             ccd_transfer_format[0].setState(PyIndi.ISS_OFF)
@@ -120,13 +145,14 @@ class IndiClient(PyIndi.BaseClient):
             ccd_transfer_format[0].setState(PyIndi.ISS_ON)
             ccd_capture_format[1].setState(PyIndi.ISS_ON)
             ccd_transfer_format[1].setState(PyIndi.ISS_OFF)
+        self.sendNewSwitch(ccd_capture_format)
+        self.sendNewSwitch(ccd_transfer_format)
+
+        return 0
 
 if __name__ == "__main__":
     client = IndiClient()
-    client.connect_server()
-    client.get_device()
-    client.connect_device()
-    client.set_exposure(0.1)
-    client.set_ccd_capture_format("INDI_RGB(RGB)")
-    client.get_properties()
+    client.set_gain(400)
+    # client.get_properties()
+    # client.capture()
     print("Ready!")
