@@ -2,6 +2,8 @@ import PyIndi
 import time
 import sys
 import threading
+
+import numpy as np
 from astropy.io import fits
 import io
 import matplotlib.pyplot as plt
@@ -16,7 +18,6 @@ class IndiClient(PyIndi.BaseClient):
         self.device_ccd = None
         self.generic_properties = []
         self.blob_event = threading.Event()
-        self.last_blob = None
         self.blob_event.clear()
 
         # Connect to the server
@@ -28,22 +29,24 @@ class IndiClient(PyIndi.BaseClient):
         # Connect to the device
         self.connect_device()
 
+        # Get exposure and controls properties
+        self.ccd_exposure = self.device_ccd.getNumber("CCD_EXPOSURE")
+        print("Exposure created")
+        self.ccd_gain = self.device_ccd.getNumber("CCD_CONTROLS")
+        print("Gain created")
+
+        # Inform to indi server we want to receive blob from CCD1
+        self.setBLOBMode(PyIndi.B_ALSO, self.device, "CCD1")
+
+        # Get blob
+        self.ccd_ccd1 = self.device_ccd.getBLOB("CCD1")
+
         # Fix frame bug
         self.set_ccd_capture_format("INDI_RAW(RAW 16)")
 
-        # Get exposure and controls properties
-        self.ccd_exposure = self.device_ccd.getNumber("CCD_EXPOSURE")
-        while not self.ccd_exposure:
-            time.sleep(0.5)
-            self.ccd_exposure = self.device_ccd.getNumber("CCD_EXPOSURE")
-        self.ccd_gain = self.device_ccd.getNumber("CCD_CONTROLS")
-        while not self.ccd_gain:
-            time.sleep(0.5)
-            self.ccd_gain = self.device_ccd.getNumber("CCD_CONTROLS")
-
     def updateProperty(self, prop):
         if prop.getType() == PyIndi.INDI_BLOB:
-            print("new BLOB ", prop.getName())
+            # print("new BLOB ", prop.getName())
             self.blob_event.set()
 
     def connect_server(self):
@@ -71,7 +74,7 @@ class IndiClient(PyIndi.BaseClient):
         while not self.device_ccd:
             time.sleep(0.5)
             self.device_ccd = self.getDevice(self.device)
-        print(f"   > {self.device_ccd.getDeviceName()}")
+        print(f"{self.device_ccd.getDeviceName()} found")
 
     def connect_device(self):
         ccd_connect = self.device_ccd.getSwitch("CONNECTION")
@@ -82,7 +85,7 @@ class IndiClient(PyIndi.BaseClient):
             ccd_connect.reset()
             ccd_connect[0].setState(PyIndi.ISS_ON)  # the "CONNECT" switch
             self.sendNewSwitch(ccd_connect)
-        print("Device connected")
+        print(f"{self.device} connected")
 
     def get_properties(self):
         generic_properties = self.device_ccd.getProperties()
@@ -114,25 +117,22 @@ class IndiClient(PyIndi.BaseClient):
     def set_exposure(self, exposure):
         self.ccd_exposure[0].setValue(exposure)
         self.sendNewNumber(self.ccd_exposure)
-        print(f"Exposure set to {exposure}")
+        self.blob_event.wait()
+        self.blob_event.clear()
 
     def set_gain(self, gain):
         self.ccd_gain[0].setValue(gain)
         self.sendNewNumber(self.ccd_gain)
+        # self.blob_event.wait()
+        self.blob_event.clear()
         print(f"Gain set to {gain}")
 
     def set_ccd_capture_format(self, capture_format="INDI_RGB(RGB)"):
         # Capture format
         ccd_capture_format = self.device_ccd.getSwitch("CCD_CAPTURE_FORMAT")
-        while not ccd_capture_format:
-            time.sleep(0.5)
-            ccd_capture_format = self.device_ccd.getSwitch("CCD_CAPTURE_FORMAT")
 
         # Transfer format
         ccd_transfer_format = self.device_ccd.getSwitch("CCD_TRANSFER_FORMAT")
-        while not ccd_transfer_format:
-            time.sleep(0.5)
-            ccd_transfer_format = self.device_ccd.getSwitch("CCD_TRANSFER_FORMAT")
 
         # Set the format
         if capture_format == "INDI_RGB(RGB)":
@@ -147,12 +147,45 @@ class IndiClient(PyIndi.BaseClient):
             ccd_transfer_format[1].setState(PyIndi.ISS_OFF)
         self.sendNewSwitch(ccd_capture_format)
         self.sendNewSwitch(ccd_transfer_format)
+        self.blob_event.clear()
+        print("Image format fixed")
 
         return 0
+
+    def capture(self, exposure=1, n_frames=10):
+        ii = 0
+        while ii < n_frames:
+            ii += 1
+            print(f"Capturing frame {ii} of {n_frames}")
+
+            # Trigger image acquisition
+            self.set_exposure(exposure)
+
+            # Get fits from blob and extract image
+            blob = self.ccd_ccd1[0]
+            fits_data = blob.getblobdata()
+            hdul = fits.open(io.BytesIO(fits_data))
+            image_data = hdul[0].data
+
+            # Define color limits (you can set them manually or based on the image statistics)
+            vmin = np.percentile(image_data, 5)  # 5th percentile
+            vmax = np.percentile(image_data, 95)  # 95th percentile
+
+            # Display the image
+            if image_data is not None:
+                plt.figure(figsize=(8, 8))
+                plt.imshow(image_data, cmap='gray', origin='lower', vmin=vmin, vmax=vmax)
+                plt.title("Picture")
+                plt.colorbar(label="Pixel value")
+                plt.show()
+            else:
+                print("No image data found in FITS file.")
+            hdul.close()
+            print(f"Frame {ii} of {n_frames} captured!")
+
 
 if __name__ == "__main__":
     client = IndiClient()
     client.set_gain(400)
-    # client.get_properties()
-    # client.capture()
+    client.capture(exposure=1, n_frames=2)
     print("Ready!")
